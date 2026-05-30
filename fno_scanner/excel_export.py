@@ -52,6 +52,12 @@ if HAS_OPENPYXL:
     FILL_FAIL = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
     FILL_PASS_ROW = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
 
+    STABILITY_FILLS = {
+        'HIGH': PatternFill(start_color='00B050', end_color='00B050', fill_type='solid'),
+        'MED': PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid'),
+        'LOW': PatternFill(start_color='FF6347', end_color='FF6347', fill_type='solid'),
+    }
+
     TITLE_FONT = Font(name='Calibri', bold=True, size=14, color='1B2A4A')
     SECTION_FONT = Font(name='Calibri', bold=True, size=12, color='1B2A4A')
     SUBTITLE_FONT = Font(name='Calibri', size=10, italic=True, color='666666')
@@ -149,7 +155,7 @@ def _build_full_results_sheet(ws, df, market_regime, stats):
         '#', 'Symbol', 'Sector', 'CMP', 'Chg%', 'VolRatio',
         'Del%', 'FUT_OI', 'FUT_CONTRACTS', 'ATR_Exp%',
         'OI_Chg%', 'OI_Class', 'PCR', 'IV%ile', 'RS_Rank',
-        'Score', 'Setup', 'Liq_Zone', 'Bias', 'ML_Conf', 'Data_Source', 'Liq(10)',
+        'Score', 'Stability', 'Setup', 'Liq_Zone', 'Bias', 'ML_Conf', 'Data_Source', 'Liq(10)',
         'OI(15)', 'Mom(15)', 'RS(10)', 'Vol(15)', 'Vola(10)',
         'SM(15)', 'Opt(10)', 'Compressed?', 'PocketPivot?',
         'Accum?', 'NR7?', 'AboveVWAP?', 'Trend'
@@ -200,6 +206,12 @@ def _build_full_results_sheet(ws, df, market_regime, stats):
                     chg_cell.font = Font(name='Calibri', size=10, color='9C0006')
             except (ValueError, TypeError):
                 pass
+
+        if 'Stability' in col_map:
+            st_cell = ws.cell(row=r_idx, column=col_map['Stability'])
+            if str(st_cell.value) in STABILITY_FILLS:
+                st_cell.fill = STABILITY_FILLS[str(st_cell.value)]
+                st_cell.font = Font(name='Calibri', size=10, bold=True)
 
     _auto_width(ws, ncols, hdr_row, hdr_row + len(export_df))
 
@@ -433,14 +445,14 @@ def _build_legend_sheet(wb):
 
 def _build_full_universe_sheet(wb, full_universe_df, stats):
     ws = wb.create_sheet("Full Universe")
-    ncols = 12
+    ncols = 14
     _write_title(ws, 1, "FULL UNIVERSE — ALL F&O STOCKS", ncols)
     total = stats.get('total', 0)
     passed = stats.get('liquidity_pass', 0)
     failed = total - passed
     _write_subtitle(ws, 2, f"Total: {total} | Passed Liquidity: {passed} | Failed: {failed}", ncols)
 
-    headers = ['#', 'Symbol', 'Sector', 'CMP', 'Avg_Vol_20d', 'Status', 'Score', 'OI_Chg%', 'OI_Class', 'PCR', 'Del%', 'Bias', 'Data_Source']
+    headers = ['#', 'Symbol', 'Sector', 'CMP', 'Avg_Vol_20d', 'Status', 'Score', 'Stability', 'OI_Chg%', 'OI_Class', 'PCR', 'Del%', 'Bias', 'Data_Source']
     hdr_row = 4
     _write_headers(ws, hdr_row, headers)
     ws.freeze_panes = f'A{hdr_row + 1}'
@@ -455,6 +467,7 @@ def _build_full_universe_sheet(wb, full_universe_df, stats):
             row_data.get('Avg_Vol_20d', ''),
             row_data.get('Status', ''),
             row_data.get('Score', ''),
+            row_data.get('Stability', ''),
             row_data.get('OI_Chg%', ''),
             row_data.get('OI_Class', ''),
             row_data.get('PCR', ''),
@@ -474,6 +487,11 @@ def _build_full_universe_sheet(wb, full_universe_df, stats):
             status_cell.fill = FILL_PASS_ROW
             if row_data.get('Score'):
                 _apply_score_fill(ws.cell(row=r_idx, column=7))
+        stability_val = str(row_data.get('Stability', ''))
+        if stability_val in STABILITY_FILLS:
+            st_cell = ws.cell(row=r_idx, column=8)
+            st_cell.fill = STABILITY_FILLS[stability_val]
+            st_cell.font = Font(name='Calibri', size=10, bold=True)
 
     _auto_width(ws, ncols, hdr_row, hdr_row + len(full_universe_df))
 

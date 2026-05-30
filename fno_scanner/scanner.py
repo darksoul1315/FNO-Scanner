@@ -40,6 +40,7 @@ from .sector_rotation import (
 from .scoring_engine import compute_institutional_score
 from .excel_export import export_comprehensive_excel
 from .ml_predictor import MLPredictor, extract_features_from_bundle
+from .monte_carlo import compute_stability
 
 
 class InstitutionalFnOScanner:
@@ -169,6 +170,8 @@ class InstitutionalFnOScanner:
 
             scoring = compute_institutional_score(analysis_bundle, sector_bonus)
 
+            mc = compute_stability(analysis_bundle, sector_bonus)
+
             ml_conf = 0.0
             ml_boost = 0
             if self.use_ml and self.ml_predictor and self.ml_predictor.is_ready:
@@ -216,6 +219,10 @@ class InstitutionalFnOScanner:
                 'Liq_Zone': scoring['liquidity_zone'],
                 'Bias': scoring['bias'],
                 'ML_Conf': round(ml_conf * 100, 1),
+                'Stability': mc['stability'],
+                '_mc_mean': mc['mean_score'],
+                '_mc_std': mc['std_score'],
+                '_mc_cv': mc['cv'],
                 '_sub_liq': scoring['sub_scores']['liquidity'],
                 '_sub_oi': scoring['sub_scores']['oi'],
                 '_sub_mom': scoring['sub_scores']['momentum'],
@@ -359,6 +366,7 @@ class InstitutionalFnOScanner:
                 row['Bias'] = r.get('Bias', '')
                 row['Setup'] = r.get('Setup', '')
                 row['VolRatio'] = r.get('VolRatio', 0)
+                row['Stability'] = r.get('Stability', '')
             universe_rows.append(row)
         self.full_universe = pd.DataFrame(universe_rows)
         if not self.full_universe.empty:
@@ -399,7 +407,7 @@ class InstitutionalFnOScanner:
         drop_cols = {'_sub_liq', '_sub_oi', '_sub_mom', '_sub_rs', '_sub_vol',
                      '_sub_vola', '_sub_sm', '_sub_opt', '_compressed',
                      '_pocket_pivot', '_accumulation', '_nr7', '_above_vwap',
-                     '_trend', 'REAL_DEL%'}
+                     '_trend', 'REAL_DEL%', '_mc_mean', '_mc_std', '_mc_cv'}
         display_cols = [c for c in df.columns if c not in drop_cols]
 
         pd.set_option('display.max_rows', 200)
@@ -463,6 +471,8 @@ class InstitutionalFnOScanner:
         print("  Score \u226555: HIGH CONVICTION  |  Score 40-54: MODERATE  |  Score 25-39: DEVELOPING  |  Score <25: WEAK")
         print("  " + "-" * 100)
         print("  OI Classes: Long Buildup (Bullish) | Short Covering (Mildly Bullish) | Short Buildup (Bearish) | Long Unwinding (Mildly Bearish)")
+        print("  " + "-" * 100)
+        print("  MC Stability: \U0001f7e2 HIGH (CV <10%) | \U0001f7e1 MED (CV 10-20%) | \U0001f534 LOW (CV >20%) — 200 perturbation iterations")
         print("=" * 180)
 
     def export_csv(self, filename=None):
