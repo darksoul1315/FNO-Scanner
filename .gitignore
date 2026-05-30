@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.ml_cache/
+.nse_cache/
+*.csv
+*.xlsx
+.DS_Store
+.env
