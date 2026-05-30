@@ -177,7 +177,7 @@ def compute_ml_range(feature_vector, predictor, n_iterations=ML_RANGE_ITERATIONS
     for i in range(n_iterations):
         perturbed = fv + np.random.normal(0, 0.05, size=fv.shape)
         try:
-            p = predictor.predict_proba(perturbed.reshape(1, -1))[0][1]
+            p = predictor.predict_proba(perturbed)
             probs[i] = p
         except Exception:
             probs[i] = 0.0
