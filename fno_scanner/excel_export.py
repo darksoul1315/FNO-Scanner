@@ -496,6 +496,50 @@ def _build_full_universe_sheet(wb, full_universe_df, stats):
     _auto_width(ws, ncols, hdr_row, hdr_row + len(full_universe_df))
 
 
+def _build_monte_carlo_sheet(wb, df):
+    ws = wb.create_sheet("Monte Carlo Stability")
+
+    cols = ['#', 'Symbol', 'Sector', 'Score', 'Stability', 'MC Mean', 'MC Std', 'MC CV', 'Drop Risk%', 'Upside%']
+    avail = [c for c in cols if c in df.columns]
+    ncols = len(avail)
+
+    _write_title(ws, 1, "MONTE CARLO STABILITY ANALYSIS — 200 Perturbation Iterations", ncols)
+    _write_subtitle(ws, 2, "CV = Std/Mean. HIGH=CV<10% stable | MED=CV 10-20% | LOW=CV>20% unreliable", ncols)
+
+    hdr_row = 4
+    _write_headers(ws, hdr_row, avail)
+    ws.freeze_panes = f'A{hdr_row + 1}'
+
+    for r_idx, (_, row) in enumerate(df.iterrows(), start=hdr_row + 1):
+        vals = [
+            r_idx - hdr_row,
+            row.get('Symbol', ''),
+            row.get('Sector', ''),
+            row.get('Score', ''),
+            row.get('Stability', ''),
+            row.get('_mc_mean', ''),
+            row.get('_mc_std', ''),
+            row.get('_mc_cv', ''),
+            row.get('_mc_drop_risk', ''),
+            row.get('_mc_upside', ''),
+        ]
+        vals = vals[:ncols]
+        for c_idx, val in enumerate(vals, 1):
+            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell.font = DATA_FONT
+            cell.alignment = DATA_CENTER
+            cell.border = THIN_BORDER
+
+        st_idx = avail.index('Stability') + 1 if 'Stability' in avail else None
+        if st_idx:
+            st_cell = ws.cell(row=r_idx, column=st_idx)
+            if str(st_cell.value) in STABILITY_FILLS:
+                st_cell.fill = STABILITY_FILLS[str(st_cell.value)]
+                st_cell.font = Font(name='Calibri', size=10, bold=True)
+
+    _auto_width(ws, ncols, hdr_row, hdr_row + len(df))
+
+
 def export_comprehensive_excel(scanner, filename=None):
     if not HAS_OPENPYXL:
         print("  [!] openpyxl not installed. Run: pip install openpyxl")
@@ -525,6 +569,7 @@ def export_comprehensive_excel(scanner, filename=None):
     if scanner.sector_metrics:
         _build_sector_rotation_sheet(wb, scanner.sector_metrics)
 
+    _build_monte_carlo_sheet(wb, df)
     _build_pipeline_stats_sheet(wb, df, scanner.stats)
     _build_scoring_ranking_sheet(wb, df)
     _build_category_sheet(wb, df)
