@@ -40,7 +40,7 @@ from .sector_rotation import (
 from .scoring_engine import compute_institutional_score
 from .excel_export import export_comprehensive_excel
 from .ml_predictor import MLPredictor, extract_features_from_bundle
-from .monte_carlo import compute_stability
+from .monte_carlo import compute_stability, BOUNCE_ITERATIONS
 
 
 class InstitutionalFnOScanner:
@@ -61,6 +61,11 @@ class InstitutionalFnOScanner:
         }
         self.use_ml = use_ml
         self.ml_predictor = MLPredictor() if use_ml else None
+        self.analysis_bundles = {}
+        self.sector_bonus_map = {}
+        self.ml_boost_map = {}
+        self.feature_vectors = {}
+        self.close_prices = {}
         if use_ml:
             loaded = self.ml_predictor.load()
             if loaded:
@@ -168,6 +173,10 @@ class InstitutionalFnOScanner:
                 'market_regime_num': regime_num,
             }
 
+            self.analysis_bundles[symbol] = analysis_bundle
+            self.sector_bonus_map[symbol] = sector_bonus
+            self.close_prices[symbol] = close
+
             scoring = compute_institutional_score(analysis_bundle, sector_bonus)
 
             mc = compute_stability(analysis_bundle, sector_bonus)
@@ -185,6 +194,8 @@ class InstitutionalFnOScanner:
                         datetime.now().strftime('%Y-%m-%d'),
                         ml_conf,
                     )
+                    self.feature_vectors[symbol] = fv
+                    self.ml_boost_map[symbol] = ml_boost
                 except Exception as e:
                     print(f"  [ML] Prediction error for {symbol}: {e}")
                     ml_conf = 0.0
@@ -223,6 +234,16 @@ class InstitutionalFnOScanner:
                 '_mc_mean': mc['mean_score'],
                 '_mc_std': mc['std_score'],
                 '_mc_cv': mc['cv'],
+                '_mc_top5_pct': 0.0,
+                '_mc_top10_pct': 0.0,
+                '_mc_top20_pct': 0.0,
+                '_mc_ml_low': 0.0,
+                '_mc_ml_high': 0.0,
+                '_mc_ml_range': 0.0,
+                '_mc_pos_prob': 0.0,
+                '_mc_pos_return': 0.0,
+                '_mc_pos_avg_dd': 0.0,
+                '_mc_pos_worst_dd': 0.0,
                 '_sub_liq': scoring['sub_scores']['liquidity'],
                 '_sub_oi': scoring['sub_scores']['oi'],
                 '_sub_mom': scoring['sub_scores']['momentum'],
@@ -367,6 +388,9 @@ class InstitutionalFnOScanner:
                 row['Setup'] = r.get('Setup', '')
                 row['VolRatio'] = r.get('VolRatio', 0)
                 row['Stability'] = r.get('Stability', '')
+                row['Bounce_T5%'] = r.get('Bounce_T5%', '')
+                row['ML_Range'] = r.get('ML_Range', '')
+                row['Pos_Prob%'] = r.get('Pos_Prob%', '')
             universe_rows.append(row)
         self.full_universe = pd.DataFrame(universe_rows)
         if not self.full_universe.empty:
@@ -391,6 +415,57 @@ class InstitutionalFnOScanner:
         print(f"  \u2502  \u2713 {len(df_results)} stocks ranked (min score: {min_score})")
         print("  \u2514" + "\u2500" * 64 + "\u2518")
 
+        # PHASE 5: MONTE CARLO ADVANCED
+        print("\n  \u250c\u2500 PHASE 5: Monte Carlo Advanced Analysis \u2500" + "\u2500" * 29 + "\u2510")
+
+        symbol_list = df_results['Symbol'].tolist()
+        bundles = {s: self.analysis_bundles[s] for s in symbol_list if s in self.analysis_bundles}
+        if bundles:
+            try:
+                from .monte_carlo import compute_bounce_test, compute_ml_range, compute_position_sizing
+                print(f"  \u2502  Running bounce test ({BOUNCE_ITERATIONS} iterations)...")
+                bounce_results = compute_bounce_test(bundles, self.sector_bonus_map, self.ml_boost_map)
+                for sym, br in bounce_results.items():
+                    if sym in df_results.index or sym in df_results['Symbol'].values:
+                        mask = df_results['Symbol'] == sym
+                        df_results.loc[mask, '_mc_top5_pct'] = br['bounce_top5_pct']
+                        df_results.loc[mask, '_mc_top10_pct'] = br['bounce_top10_pct']
+                        df_results.loc[mask, '_mc_top20_pct'] = br['bounce_top20_pct']
+
+                if self.use_ml and self.ml_predictor and self.ml_predictor.is_ready:
+                    print(f"  \u2502  Running ML confidence range...")
+                    for sym in symbol_list:
+                        if sym in self.feature_vectors:
+                            fv = self.feature_vectors[sym]
+                            mlr = compute_ml_range(fv, self.ml_predictor)
+                            mask = df_results['Symbol'] == sym
+                            df_results.loc[mask, '_mc_ml_low'] = mlr['ml_range_low']
+                            df_results.loc[mask, '_mc_ml_high'] = mlr['ml_range_high']
+                            df_results.loc[mask, '_mc_ml_range'] = mlr['ml_range']
+
+                print(f"  \u2502  Running position sizing...")
+                for sym in symbol_list:
+                    if sym in self.close_prices:
+                        ps = compute_position_sizing(self.close_prices[sym])
+                        mask = df_results['Symbol'] == sym
+                        df_results.loc[mask, '_mc_pos_prob'] = ps['pos_prob_positive']
+                        df_results.loc[mask, '_mc_pos_return'] = ps['pos_expected_return']
+                        df_results.loc[mask, '_mc_pos_avg_dd'] = ps['pos_avg_drawdown']
+                        df_results.loc[mask, '_mc_pos_worst_dd'] = ps['pos_worst_drawdown']
+
+            except Exception as e:
+                print(f"  \u2502  MC advanced error: {e}")
+            print("  \u2514" + "\u2500" * 64 + "\u2518")
+        else:
+            print("  \u2502  Skipped (no bundles available)")
+            print("  \u2514" + "\u2500" * 64 + "\u2518")
+
+        df_results['Bounce_T5%'] = df_results['_mc_top5_pct'].apply(lambda x: f'{x:.0f}%')
+        df_results['ML_Range'] = df_results.apply(
+            lambda r: f'{r["_mc_ml_low"]:.0f}-{r["_mc_ml_high"]:.0f}' if r['_mc_ml_range'] > 0 else '', axis=1
+        )
+        df_results['Pos_Prob%'] = df_results['_mc_pos_prob'].apply(lambda x: f'{x:.0f}%' if x > 0 else '')
+
         elapsed = time.time() - start_time
         print(f"\n  \u23f1  Total scan time: {elapsed:.1f} seconds")
 
@@ -407,7 +482,10 @@ class InstitutionalFnOScanner:
         drop_cols = {'_sub_liq', '_sub_oi', '_sub_mom', '_sub_rs', '_sub_vol',
                      '_sub_vola', '_sub_sm', '_sub_opt', '_compressed',
                      '_pocket_pivot', '_accumulation', '_nr7', '_above_vwap',
-                     '_trend', 'REAL_DEL%', '_mc_mean', '_mc_std', '_mc_cv'}
+                     '_trend', 'REAL_DEL%', '_mc_mean', '_mc_std', '_mc_cv',
+                     '_mc_top5_pct', '_mc_top10_pct', '_mc_top20_pct',
+                     '_mc_ml_low', '_mc_ml_high', '_mc_ml_range',
+                     '_mc_pos_prob', '_mc_pos_return', '_mc_pos_avg_dd', '_mc_pos_worst_dd'}
         display_cols = [c for c in df.columns if c not in drop_cols]
 
         pd.set_option('display.max_rows', 200)
@@ -473,6 +551,7 @@ class InstitutionalFnOScanner:
         print("  OI Classes: Long Buildup (Bullish) | Short Covering (Mildly Bullish) | Short Buildup (Bearish) | Long Unwinding (Mildly Bearish)")
         print("  " + "-" * 100)
         print("  MC Stability: \U0001f7e2 HIGH (CV <10%) | \U0001f7e1 MED (CV 10-20%) | \U0001f534 LOW (CV >20%) — 200 perturbation iterations")
+        print("  MC Bounce: Top5% = % of 200 iterations stock stays in top 5 | ML_Range = Confidence band width | Pos_Prob% = % positive return paths (10k sims)")
         print("=" * 180)
 
     def export_csv(self, filename=None):

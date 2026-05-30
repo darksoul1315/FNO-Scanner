@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from datetime import datetime
+from .monte_carlo import BOUNCE_ITERATIONS
 
 try:
     from openpyxl import Workbook
@@ -155,7 +156,8 @@ def _build_full_results_sheet(ws, df, market_regime, stats):
         '#', 'Symbol', 'Sector', 'CMP', 'Chg%', 'VolRatio',
         'Del%', 'FUT_OI', 'FUT_CONTRACTS', 'ATR_Exp%',
         'OI_Chg%', 'OI_Class', 'PCR', 'IV%ile', 'RS_Rank',
-        'Score', 'Stability', 'Setup', 'Liq_Zone', 'Bias', 'ML_Conf', 'Data_Source', 'Liq(10)',
+        'Score', 'Stability', 'Bounce_T5%', 'ML_Range', 'Pos_Prob%',
+        'Setup', 'Liq_Zone', 'Bias', 'ML_Conf', 'Data_Source', 'Liq(10)',
         'OI(15)', 'Mom(15)', 'RS(10)', 'Vol(15)', 'Vola(10)',
         'SM(15)', 'Opt(10)', 'Compressed?', 'PocketPivot?',
         'Accum?', 'NR7?', 'AboveVWAP?', 'Trend'
@@ -445,14 +447,14 @@ def _build_legend_sheet(wb):
 
 def _build_full_universe_sheet(wb, full_universe_df, stats):
     ws = wb.create_sheet("Full Universe")
-    ncols = 14
+    ncols = 17
     _write_title(ws, 1, "FULL UNIVERSE — ALL F&O STOCKS", ncols)
     total = stats.get('total', 0)
     passed = stats.get('liquidity_pass', 0)
     failed = total - passed
     _write_subtitle(ws, 2, f"Total: {total} | Passed Liquidity: {passed} | Failed: {failed}", ncols)
 
-    headers = ['#', 'Symbol', 'Sector', 'CMP', 'Avg_Vol_20d', 'Status', 'Score', 'Stability', 'OI_Chg%', 'OI_Class', 'PCR', 'Del%', 'Bias', 'Data_Source']
+    headers = ['#', 'Symbol', 'Sector', 'CMP', 'Avg_Vol_20d', 'Status', 'Score', 'Stability', 'Bounce_T5%', 'ML_Range', 'Pos_Prob%', 'OI_Chg%', 'OI_Class', 'PCR', 'Del%', 'Bias', 'Data_Source']
     hdr_row = 4
     _write_headers(ws, hdr_row, headers)
     ws.freeze_panes = f'A{hdr_row + 1}'
@@ -468,6 +470,9 @@ def _build_full_universe_sheet(wb, full_universe_df, stats):
             row_data.get('Status', ''),
             row_data.get('Score', ''),
             row_data.get('Stability', ''),
+            row_data.get('Bounce_T5%', ''),
+            row_data.get('ML_Range', ''),
+            row_data.get('Pos_Prob%', ''),
             row_data.get('OI_Chg%', ''),
             row_data.get('OI_Class', ''),
             row_data.get('PCR', ''),
@@ -499,39 +504,48 @@ def _build_full_universe_sheet(wb, full_universe_df, stats):
 def _build_monte_carlo_sheet(wb, df):
     ws = wb.create_sheet("Monte Carlo Stability")
 
-    cols = ['#', 'Symbol', 'Sector', 'Score', 'Stability', 'MC Mean', 'MC Std', 'MC CV', 'Drop Risk%', 'Upside%']
-    avail = [c for c in cols if c in df.columns]
+    mc_cols = ['#', 'Symbol', 'Sector', 'Score', 'Stability',
+               'MC Mean', 'MC Std', 'MC CV',
+               'Top5%', 'Top10%', 'Top20%',
+               'ML_Range', 'Prob%', 'ExpRet%', 'AvgDD%', 'WorstDD%']
+
+    alias = {
+        'MC Mean': '_mc_mean', 'MC Std': '_mc_std', 'MC CV': '_mc_cv',
+        'Top5%': '_mc_top5_pct', 'Top10%': '_mc_top10_pct', 'Top20%': '_mc_top20_pct',
+        'ML_Range': '_mc_ml_range', 'Prob%': '_mc_pos_prob',
+        'ExpRet%': '_mc_pos_return', 'AvgDD%': '_mc_pos_avg_dd', 'WorstDD%': '_mc_pos_worst_dd',
+    }
+
+    avail = ['#']
+    for c in mc_cols[1:]:
+        src = alias.get(c, c)
+        if src in df.columns or c in df.columns:
+            avail.append(c)
+
     ncols = len(avail)
 
-    _write_title(ws, 1, "MONTE CARLO STABILITY ANALYSIS — 200 Perturbation Iterations", ncols)
-    _write_subtitle(ws, 2, "CV = Std/Mean. HIGH=CV<10% stable | MED=CV 10-20% | LOW=CV>20% unreliable", ncols)
+    _write_title(ws, 1, "MONTE CARLO — BOUNCE TEST + CONFIDENCE RANGE + POSITION SIZING", ncols)
+    _write_subtitle(ws, 2, f"Top5% = how often stock stays in top 5 across {BOUNCE_ITERATIONS} perturbations | ML_Range = confidence interval width | Position sizing from 10k simulated paths", ncols)
 
     hdr_row = 4
     _write_headers(ws, hdr_row, avail)
     ws.freeze_panes = f'A{hdr_row + 1}'
 
-    for r_idx, (_, row) in enumerate(df.iterrows(), start=hdr_row + 1):
-        vals = [
-            r_idx - hdr_row,
-            row.get('Symbol', ''),
-            row.get('Sector', ''),
-            row.get('Score', ''),
-            row.get('Stability', ''),
-            row.get('_mc_mean', ''),
-            row.get('_mc_std', ''),
-            row.get('_mc_cv', ''),
-            row.get('_mc_drop_risk', ''),
-            row.get('_mc_upside', ''),
-        ]
-        vals = vals[:ncols]
+    for r_idx, (_, row_data) in enumerate(df.iterrows(), start=hdr_row + 1):
+        vals = [r_idx - hdr_row]
+        for c in avail[1:]:
+            src = alias.get(c, c)
+            val = row_data.get(src, row_data.get(c, ''))
+            vals.append(val)
+
         for c_idx, val in enumerate(vals, 1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val)
             cell.font = DATA_FONT
             cell.alignment = DATA_CENTER
             cell.border = THIN_BORDER
 
-        st_idx = avail.index('Stability') + 1 if 'Stability' in avail else None
-        if st_idx:
+        if 'Stability' in avail:
+            st_idx = avail.index('Stability') + 1
             st_cell = ws.cell(row=r_idx, column=st_idx)
             if str(st_cell.value) in STABILITY_FILLS:
                 st_cell.fill = STABILITY_FILLS[str(st_cell.value)]
